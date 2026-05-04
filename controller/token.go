@@ -159,6 +159,8 @@ func GetTokenUsage(c *gin.Context) {
 			"unlimited_quota":      token.UnlimitedQuota,
 			"model_limits":         token.GetModelLimitsMap(),
 			"model_limits_enabled": token.ModelLimitsEnabled,
+			"activated_at":         token.ActivatedTime,
+			"activated_expires_at": expiredAt,
 			"expires_at":           expiredAt,
 		},
 	})
@@ -207,20 +209,26 @@ func AddToken(c *gin.Context) {
 		common.SysLog("failed to generate token key: " + err.Error())
 		return
 	}
+	tokenExpiredTime := token.ExpiredTime
+	if token.ValidDurationSeconds > 0 {
+		tokenExpiredTime = -1
+	}
 	cleanToken := model.Token{
-		UserId:             c.GetInt("id"),
-		Name:               token.Name,
-		Key:                key,
-		CreatedTime:        common.GetTimestamp(),
-		AccessedTime:       common.GetTimestamp(),
-		ExpiredTime:        token.ExpiredTime,
-		RemainQuota:        token.RemainQuota,
-		UnlimitedQuota:     token.UnlimitedQuota,
-		ModelLimitsEnabled: token.ModelLimitsEnabled,
-		ModelLimits:        token.ModelLimits,
-		AllowIps:           token.AllowIps,
-		Group:              token.Group,
-		CrossGroupRetry:    token.CrossGroupRetry,
+		UserId:               c.GetInt("id"),
+		Name:                 token.Name,
+		Key:                  key,
+		CreatedTime:          common.GetTimestamp(),
+		AccessedTime:         0,
+		ExpiredTime:          tokenExpiredTime,
+		ActivatedTime:        0,
+		ValidDurationSeconds: token.ValidDurationSeconds,
+		RemainQuota:          token.RemainQuota,
+		UnlimitedQuota:       token.UnlimitedQuota,
+		ModelLimitsEnabled:   token.ModelLimitsEnabled,
+		ModelLimits:          token.ModelLimits,
+		AllowIps:             token.AllowIps,
+		Group:                token.Group,
+		CrossGroupRetry:      token.CrossGroupRetry,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -291,7 +299,16 @@ func UpdateToken(c *gin.Context) {
 	} else {
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
-		cleanToken.ExpiredTime = token.ExpiredTime
+		cleanToken.ValidDurationSeconds = token.ValidDurationSeconds
+		if cleanToken.ValidDurationSeconds > 0 {
+			if cleanToken.ActivatedTime == 0 {
+				cleanToken.ExpiredTime = -1
+			} else if token.ExpiredTime > 0 {
+				cleanToken.ExpiredTime = token.ExpiredTime
+			}
+		} else {
+			cleanToken.ExpiredTime = token.ExpiredTime
+		}
 		cleanToken.RemainQuota = token.RemainQuota
 		cleanToken.UnlimitedQuota = token.UnlimitedQuota
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled

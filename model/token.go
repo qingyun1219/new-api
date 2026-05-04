@@ -12,23 +12,25 @@ import (
 )
 
 type Token struct {
-	Id                 int            `json:"id"`
-	UserId             int            `json:"user_id" gorm:"index"`
-	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
-	Status             int            `json:"status" gorm:"default:1"`
-	Name               string         `json:"name" gorm:"index" `
-	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
-	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`
-	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
-	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
-	UnlimitedQuota     bool           `json:"unlimited_quota"`
-	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
-	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
-	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
-	Group              string         `json:"group" gorm:"default:''"`
-	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
-	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	Id                   int            `json:"id"`
+	UserId               int            `json:"user_id" gorm:"index"`
+	Key                  string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
+	Status               int            `json:"status" gorm:"default:1"`
+	Name                 string         `json:"name" gorm:"index" `
+	CreatedTime          int64          `json:"created_time" gorm:"bigint"`
+	AccessedTime         int64          `json:"accessed_time" gorm:"bigint"`
+	ExpiredTime          int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
+	ActivatedTime        int64          `json:"activated_time" gorm:"bigint;default:0"`
+	ValidDurationSeconds int64          `json:"valid_duration_seconds" gorm:"bigint;default:0"`
+	RemainQuota          int            `json:"remain_quota" gorm:"default:0"`
+	UnlimitedQuota       bool           `json:"unlimited_quota"`
+	ModelLimitsEnabled   bool           `json:"model_limits_enabled"`
+	ModelLimits          string         `json:"model_limits" gorm:"type:text"`
+	AllowIps             *string        `json:"allow_ips" gorm:"default:''"`
+	UsedQuota            int            `json:"used_quota" gorm:"default:0"` // used quota
+	Group                string         `json:"group" gorm:"default:''"`
+	CrossGroupRetry      bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
+	DeletedAt            gorm.DeletedAt `gorm:"index"`
 }
 
 func (token *Token) Clean() {
@@ -294,7 +296,7 @@ func (token *Token) Update() (err error) {
 			})
 		}
 	}()
-	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+	err = DB.Model(token).Select("name", "status", "expired_time", "activated_time", "valid_duration_seconds", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
 	return err
 }
@@ -359,6 +361,39 @@ func DisableModelLimits(tokenId int) error {
 	return token.Update()
 }
 
+func activateTokenIfNeeded(token *Token) (bool, error) {
+	if token == nil {
+		return false, errors.New("token 为空")
+	}
+	if token.ValidDurationSeconds <= 0 || token.ActivatedTime != 0 {
+		return false, nil
+	}
+	now := common.GetTimestamp()
+	token.ActivatedTime = now
+	token.ExpiredTime = now + token.ValidDurationSeconds
+	if err := DB.Model(&Token{}).Where("id = ?", token.Id).Updates(map[string]interface{}{
+		"activated_time":         token.ActivatedTime,
+		"expired_time":           token.ExpiredTime,
+		"accessed_time":          now,
+		"valid_duration_seconds": token.ValidDurationSeconds,
+	}).Error; err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func setTokenAccessedTime(id int) error {
+	return DB.Model(&Token{}).Where("id = ?", id).Update("accessed_time", common.GetTimestamp()).Error
+}
+
+func tokenHasActivatedDuration(token *Token) bool {
+	return token != nil && token.ValidDurationSeconds > 0
+}
+
+func tokenIsNeverExpire(token *Token) bool {
+	return token != nil && token.ExpiredTime == -1
+}
+
 func DeleteTokenById(id int, userId int) (err error) {
 	// Why we need userId here? In case user want to delete other's token.
 	if id == 0 || userId == 0 {
@@ -415,21 +450,72 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 		})
 	}
 	if common.BatchUpdateEnabled {
+		if shouldActivate, err := shouldActivateTokenOnConsume(id); err != nil {
+			return err
+		} else if shouldActivate {
+			return decreaseTokenQuota(id, key, quota)
+		}
 		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
 		return nil
 	}
-	return decreaseTokenQuota(id, quota)
+	return decreaseTokenQuota(id, key, quota)
 }
 
-func decreaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
-			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", quota),
-			"accessed_time": common.GetTimestamp(),
-		},
-	).Error
-	return err
+func shouldActivateTokenOnConsume(id int) (bool, error) {
+	var token Token
+	if err := DB.Select("id", "activated_time", "valid_duration_seconds").First(&token, "id = ?", id).Error; err != nil {
+		return false, err
+	}
+	return token.ValidDurationSeconds > 0 && token.ActivatedTime == 0, nil
+}
+
+func decreaseTokenQuota(id int, key string, quota int) (err error) {
+	now := common.GetTimestamp()
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var token Token
+	if err = tx.First(&token, "id = ?", id).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	updates := map[string]interface{}{
+		"remain_quota":  gorm.Expr("remain_quota - ?", quota),
+		"used_quota":    gorm.Expr("used_quota + ?", quota),
+		"accessed_time": now,
+	}
+	activated := false
+	if token.ValidDurationSeconds > 0 && token.ActivatedTime == 0 {
+		updates["activated_time"] = now
+		updates["expired_time"] = now + token.ValidDurationSeconds
+		activated = true
+	}
+
+	err = tx.Model(&Token{}).Where("id = ?", id).Updates(updates).Error
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return err
+	}
+	if activated && common.RedisEnabled {
+		gopool.Go(func() {
+			if err := cacheDeleteToken(key); err != nil {
+				common.SysLog("failed to invalidate activated token cache: " + err.Error())
+			}
+		})
+	}
+	return nil
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

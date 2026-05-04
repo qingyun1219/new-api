@@ -302,7 +302,28 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
         <DataTableColumnHeader column={column} title={t('Expires')} />
       ),
       cell: ({ row }) => {
-        const expiredTime = row.getValue('expired_time') as number
+        const apiKey = row.original
+        const expiredTime = apiKey.expired_time
+        if (apiKey.valid_duration_seconds > 0 && !apiKey.activated_time) {
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <StatusBadge
+                    label={t('Not Activated')}
+                    variant='neutral'
+                    copyable={false}
+                  />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <span className='text-xs'>
+                  {t('Expires after first consumption')}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          )
+        }
         if (expiredTime === -1) {
           return (
             <StatusBadge

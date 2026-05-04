@@ -75,6 +75,7 @@ const EditTokenModal = (props) => {
     remain_quota: 0,
     remain_amount: 0,
     expired_time: -1,
+    valid_duration_seconds: 0,
     unlimited_quota: true,
     model_limits_enabled: false,
     model_limits: [],
@@ -88,20 +89,13 @@ const EditTokenModal = (props) => {
     props.handleClose();
   };
 
-  const setExpiredTime = (month, day, hour, minute) => {
-    let now = new Date();
-    let timestamp = now.getTime() / 1000;
+  const setActivationDuration = (month, day, hour, minute) => {
     let seconds = month * 30 * 24 * 60 * 60;
     seconds += day * 24 * 60 * 60;
     seconds += hour * 60 * 60;
     seconds += minute * 60;
-    if (!formApiRef.current) return;
-    if (seconds !== 0) {
-      timestamp += seconds;
-      formApiRef.current.setValue('expired_time', timestamp2string(timestamp));
-    } else {
-      formApiRef.current.setValue('expired_time', -1);
-    }
+    formApiRef.current?.setValue('valid_duration_seconds', seconds);
+    formApiRef.current?.setValue('expired_time', -1);
   };
 
   const loadModels = async () => {
@@ -227,15 +221,9 @@ const EditTokenModal = (props) => {
         setLoading(false);
         return;
       }
-      if (localInputs.expired_time !== -1) {
-        let time = Date.parse(localInputs.expired_time);
-        if (isNaN(time)) {
-          showError(t('过期时间格式错误！'));
-          setLoading(false);
-          return;
-        }
-        localInputs.expired_time = Math.ceil(time / 1000);
-      }
+      localInputs.valid_duration_seconds =
+        parseInt(localInputs.valid_duration_seconds, 10) || 0;
+      localInputs.expired_time = -1;
       localInputs.model_limits = localInputs.model_limits.join(',');
       localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
       let res = await API.put(`/api/token/`, {
@@ -271,15 +259,9 @@ const EditTokenModal = (props) => {
           break;
         }
 
-        if (localInputs.expired_time !== -1) {
-          let time = Date.parse(localInputs.expired_time);
-          if (isNaN(time)) {
-            showError(t('过期时间格式错误！'));
-            setLoading(false);
-            break;
-          }
-          localInputs.expired_time = Math.ceil(time / 1000);
-        }
+        localInputs.valid_duration_seconds =
+          parseInt(localInputs.valid_duration_seconds, 10) || 0;
+        localInputs.expired_time = -1;
         localInputs.model_limits = localInputs.model_limits.join(',');
         localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
         let res = await API.post(`/api/token/`, localInputs);
@@ -426,63 +408,44 @@ const EditTokenModal = (props) => {
                     />
                   </Col>
                   <Col xs={24} sm={24} md={24} lg={10} xl={10}>
-                    <Form.DatePicker
-                      field='expired_time'
-                      label={t('过期时间')}
-                      type='dateTime'
-                      placeholder={t('请选择过期时间')}
-                      rules={[
-                        { required: true, message: t('请选择过期时间') },
-                        {
-                          validator: (rule, value) => {
-                            // 允许 -1 表示永不过期，也允许空值在必填校验时被拦截
-                            if (value === -1 || !value)
-                              return Promise.resolve();
-                            const time = Date.parse(value);
-                            if (isNaN(time)) {
-                              return Promise.reject(t('过期时间格式错误！'));
-                            }
-                            if (time <= Date.now()) {
-                              return Promise.reject(
-                                t('过期时间不能早于当前时间！'),
-                              );
-                            }
-                            return Promise.resolve();
-                          },
-                        },
-                      ]}
-                      showClear
+                    <Form.InputNumber
+                      field='valid_duration_seconds'
+                      label={t('首次消费后有效期（秒）')}
+                      min={0}
+                      step={60}
+                      placeholder={t('0 表示永不过期')}
+                      extraText={t('倒计时从首次真实消费后开始，创建时保持永不过期')}
                       style={{ width: '100%' }}
                     />
                   </Col>
                   <Col xs={24} sm={24} md={24} lg={14} xl={14}>
-                    <Form.Slot label={t('过期时间快捷设置')}>
+                    <Form.Slot label={t('首次消费后有效期快捷设置')}>
                       <Space wrap>
                         <Button
                           theme='light'
                           type='primary'
-                          onClick={() => setExpiredTime(0, 0, 0, 0)}
+                          onClick={() => setActivationDuration(0, 0, 0, 0)}
                         >
                           {t('永不过期')}
                         </Button>
                         <Button
                           theme='light'
                           type='tertiary'
-                          onClick={() => setExpiredTime(1, 0, 0, 0)}
+                          onClick={() => setActivationDuration(1, 0, 0, 0)}
                         >
                           {t('一个月')}
                         </Button>
                         <Button
                           theme='light'
                           type='tertiary'
-                          onClick={() => setExpiredTime(0, 1, 0, 0)}
+                          onClick={() => setActivationDuration(0, 1, 0, 0)}
                         >
                           {t('一天')}
                         </Button>
                         <Button
                           theme='light'
                           type='tertiary'
-                          onClick={() => setExpiredTime(0, 0, 1, 0)}
+                          onClick={() => setActivationDuration(0, 0, 1, 0)}
                         >
                           {t('一小时')}
                         </Button>

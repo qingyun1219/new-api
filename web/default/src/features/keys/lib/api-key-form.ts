@@ -10,7 +10,7 @@ import { type ApiKeyFormData, type ApiKey } from '../types'
 export const apiKeyFormSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   remain_quota_dollars: z.number().min(0).optional(),
-  expired_time: z.date().optional(),
+  valid_duration_seconds: z.number().min(0).optional(),
   unlimited_quota: z.boolean(),
   model_limits: z.array(z.string()),
   allow_ips: z.string().optional(),
@@ -28,7 +28,7 @@ export type ApiKeyFormValues = z.infer<typeof apiKeyFormSchema>
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
   remain_quota_dollars: 10,
-  expired_time: undefined,
+  valid_duration_seconds: 0,
   unlimited_quota: true,
   model_limits: [],
   allow_ips: '',
@@ -62,9 +62,8 @@ export function transformFormDataToPayload(
     remain_quota: data.unlimited_quota
       ? 0
       : parseQuotaFromDollars(data.remain_quota_dollars || 0),
-    expired_time: data.expired_time
-      ? Math.floor(data.expired_time.getTime() / 1000)
-      : -1,
+    valid_duration_seconds: data.valid_duration_seconds || 0,
+    expired_time: -1,
     unlimited_quota: data.unlimited_quota,
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
@@ -83,10 +82,7 @@ export function transformApiKeyToFormDefaults(
   return {
     name: apiKey.name,
     remain_quota_dollars: quotaUnitsToDollars(apiKey.remain_quota),
-    expired_time:
-      apiKey.expired_time > 0
-        ? new Date(apiKey.expired_time * 1000)
-        : undefined,
+    valid_duration_seconds: apiKey.valid_duration_seconds || 0,
     unlimited_quota: apiKey.unlimited_quota,
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)

@@ -60,6 +60,18 @@ function renderTimestamp(timestamp) {
   return <>{timestamp2string(timestamp)}</>;
 }
 
+function renderDuration(seconds, t) {
+  if (!seconds) return t('永不过期');
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const parts = [];
+  if (days) parts.push(t('{{count}}天', { count: days }));
+  if (hours) parts.push(t('{{count}}小时', { count: hours }));
+  if (minutes) parts.push(t('{{count}}分钟', { count: minutes }));
+  return parts.length > 0 ? parts.join(' ') : t('{{count}}秒', { count: seconds });
+}
+
 // Render status column only (no usage)
 const renderStatus = (text, record, t) => {
   const enabled = text === 1;
@@ -544,9 +556,30 @@ export const getTokensColumns = ({
       },
     },
     {
+      title: t('激活时间'),
+      dataIndex: 'activated_time',
+      render: (text) => {
+        return <div>{text ? renderTimestamp(text) : '-'}</div>;
+      },
+    },
+    {
       title: t('过期时间'),
       dataIndex: 'expired_time',
       render: (text, record, index) => {
+        if (record.valid_duration_seconds > 0 && !record.activated_time) {
+          return (
+            <Tooltip
+              content={t('首次真实消费后开始倒计时，有效期：{{duration}}', {
+                duration: renderDuration(record.valid_duration_seconds, t),
+              })}
+              position='top'
+            >
+              <Tag color='white' shape='circle'>
+                {t('未激活')}
+              </Tag>
+            </Tooltip>
+          );
+        }
         return (
           <div>
             {record.expired_time === -1 ? t('永不过期') : renderTimestamp(text)}

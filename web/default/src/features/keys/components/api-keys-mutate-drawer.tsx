@@ -42,7 +42,6 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { DateTimePicker } from '@/components/datetime-picker'
 import { MultiSelect } from '@/components/multi-select'
 import { createApiKey, updateApiKey, getApiKey } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
@@ -218,18 +217,12 @@ export function ApiKeysMutateDrawer({
     }
   }
 
-  const handleSetExpiry = (months: number, days: number, hours: number) => {
-    if (months === 0 && days === 0 && hours === 0) {
-      form.setValue('expired_time', undefined)
-      return
-    }
-
-    const now = new Date()
-    now.setMonth(now.getMonth() + months)
-    now.setDate(now.getDate() + days)
-    now.setHours(now.getHours() + hours)
-
-    form.setValue('expired_time', now)
+  const handleSetDuration = (months: number, days: number, hours: number) => {
+    let seconds = 0
+    seconds += months * 30 * 24 * 60 * 60
+    seconds += days * 24 * 60 * 60
+    seconds += hours * 60 * 60
+    form.setValue('valid_duration_seconds', seconds)
   }
 
   const { meta: currencyMeta } = getCurrencyDisplay()
@@ -343,17 +336,21 @@ export function ApiKeysMutateDrawer({
 
               <FormField
                 control={form.control}
-                name='expired_time'
+                name='valid_duration_seconds'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Expiration Time')}</FormLabel>
+                    <FormLabel>{t('Activation Duration')}</FormLabel>
                     <div className='grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'>
                       <FormControl>
-                        <DateTimePicker
-                          value={field.value}
-                          onChange={field.onChange}
-                          placeholder={t('Never expires')}
-                          className='min-w-0 [&_input[type=time]]:w-24 sm:[&_input[type=time]]:w-32'
+                        <Input
+                          {...field}
+                          type='number'
+                          min='0'
+                          step='60'
+                          placeholder={t('0 means never expires until activated')}
+                          onChange={(e) =>
+                            field.onChange(parseInt(e.target.value, 10) || 0)
+                          }
                         />
                       </FormControl>
                       <div className='grid grid-cols-4 gap-2 sm:flex'>
@@ -362,7 +359,7 @@ export function ApiKeysMutateDrawer({
                           variant='outline'
                           size='sm'
                           className='px-2 text-xs sm:px-3 sm:text-sm'
-                          onClick={() => handleSetExpiry(0, 0, 0)}
+                          onClick={() => handleSetDuration(0, 0, 0)}
                         >
                           {t('Never')}
                         </Button>
@@ -371,7 +368,7 @@ export function ApiKeysMutateDrawer({
                           variant='outline'
                           size='sm'
                           className='px-2 text-xs sm:px-3 sm:text-sm'
-                          onClick={() => handleSetExpiry(1, 0, 0)}
+                          onClick={() => handleSetDuration(1, 0, 0)}
                         >
                           {t('1 Month')}
                         </Button>
@@ -380,7 +377,7 @@ export function ApiKeysMutateDrawer({
                           variant='outline'
                           size='sm'
                           className='px-2 text-xs sm:px-3 sm:text-sm'
-                          onClick={() => handleSetExpiry(0, 1, 0)}
+                          onClick={() => handleSetDuration(0, 1, 0)}
                         >
                           {t('1 Day')}
                         </Button>
@@ -389,12 +386,15 @@ export function ApiKeysMutateDrawer({
                           variant='outline'
                           size='sm'
                           className='px-2 text-xs sm:px-3 sm:text-sm'
-                          onClick={() => handleSetExpiry(0, 0, 1)}
+                          onClick={() => handleSetDuration(0, 0, 1)}
                         >
                           {t('1 Hour')}
                         </Button>
                       </div>
                     </div>
+                    <FormDescription>
+                      {t('The countdown starts after the first real consumption.')}
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
