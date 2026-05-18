@@ -120,8 +120,8 @@ func sanitizeLikePattern(input string) (string, error) {
 		return input, nil
 	}
 
-	// 5. 无 % 时，精确全匹配
-	return input, nil
+	// 5. 无 % 时，自动包裹为模糊匹配
+	return "%" + input + "%", nil
 }
 
 const searchHardLimit = 100
@@ -139,17 +139,14 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 		token = strings.TrimPrefix(token, "sk-")
 	}
 
-	// 超量用户（令牌数超过上限）只允许精确搜索，禁止模糊搜索
+	// 超量用户（令牌数超过上限）要求搜索关键词至少 2 个字符
 	maxTokens := operation_setting.GetMaxUserTokens()
-	hasFuzzy := strings.Contains(keyword, "%") || strings.Contains(token, "%")
-	if hasFuzzy {
-		count, err := CountUserTokens(userId)
-		if err != nil {
-			common.SysLog("failed to count user tokens: " + err.Error())
-			return nil, 0, errors.New("获取令牌数量失败")
-		}
-		if int(count) > maxTokens {
-			return nil, 0, errors.New("令牌数量超过上限，仅允许精确搜索，请勿使用 % 通配符")
+	count, countErr := CountUserTokens(userId)
+	if countErr == nil && int(count) > maxTokens {
+		kwLen := len(strings.ReplaceAll(keyword, "%", ""))
+		tkLen := len(strings.ReplaceAll(token, "%", ""))
+		if (keyword != "" && kwLen < 2) || (token != "" && tkLen < 2) {
+			return nil, 0, errors.New("令牌数量超过上限，搜索关键词至少需要 2 个字符")
 		}
 	}
 
